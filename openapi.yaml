@@ -1,0 +1,463 @@
+openapi: 3.1.0
+info:
+  title: media-gateway
+  description: 通用媒体处理服务，提供视频转码、缩略图生成、元数据提取、MIME 检测等能力。
+  version: 0.1.0
+  contact:
+    name: 于小丘
+    email: admin@yuxiaoqiu.cn
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8190
+    description: 本地开发
+
+tags:
+  - name: health
+    description: 健康检查
+  - name: sync
+    description: 同步工具端点（亚秒返回）
+  - name: tasks
+    description: 异步媒体处理任务
+
+security:
+  - hmac: []
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: 健康检查
+      security: []
+      operationId: healthCheck
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/v1/detect-mime:
+    post:
+      tags: [sync]
+      summary: MIME 类型检测
+      description: |
+        通过魔数（magic bytes）检测文件的 MIME 类型。
+        优先级：Content-Type header > 魔数检测 > stdlib 回退。
+        仅读取文件前 8KB 进行检测。
+      operationId: detectMime
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 待检测的文件
+      responses:
+        "200":
+          description: 检测成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetectMimeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/image-meta:
+    post:
+      tags: [sync]
+      summary: 图片元数据提取
+      description: |
+        提取图片的宽高和 MIME 类型。
+        支持 PNG、JPEG、GIF、WebP 格式。
+        仅读取图片头部信息，不解码完整像素数据。
+      operationId: imageMeta
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 待分析的图片文件
+      responses:
+        "200":
+          description: 提取成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageMetaResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/tasks:
+    post:
+      tags: [tasks]
+      summary: 创建异步任务
+      description: |
+        提交一个异步媒体处理任务。支持三种类型：
+        - `thumbnail`：从视频中提取首帧作为缩略图（WebP/JPEG/PNG）
+        - `metadata`：通过 ffprobe 提取媒体流元数据
+        - `transcode`：视频转码（H.264 MP4，自适应码率）
+
+        任务入队后立即返回 202，处理完成后通过 callback 通知调用方。
+        队列满时返回 429 + Retry-After。
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskRequest"
+      responses:
+        "202":
+          description: 任务已入队
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          description: 任务队列已满
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                example: 5
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tasks/{task_id}:
+    get:
+      tags: [tasks]
+      summary: 查询任务状态
+      operationId: getTask
+      parameters:
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "200":
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [tasks]
+      summary: 删除任务
+      description: 删除已完成或已失败的任务记录。排队中的任务会被取消。
+      operationId: deleteTask
+      parameters:
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "204":
+          description: 已删除
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    hmac:
+      type: apiKey
+      in: header
+      name: X-MG-Signature
+      description: |
+        HMAC-SHA256 请求签名。需同时提供 `X-MG-Timestamp`（Unix 秒）。
+        签名格式：`HMAC-SHA256(method|path|timestamp|SHA256(body), secret)`
+
+  parameters:
+    TaskID:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: 任务 ID
+
+  responses:
+    BadRequest:
+      description: 请求参数错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: task not found
+
+    DetectMimeResponse:
+      type: object
+      required: [mime_type]
+      properties:
+        mime_type:
+          type: string
+          example: image/jpeg
+
+    ImageMetaResponse:
+      type: object
+      required: [width, height, mime_type]
+      properties:
+        width:
+          type: integer
+          example: 1920
+        height:
+          type: integer
+          example: 1080
+        mime_type:
+          type: string
+          example: image/png
+
+    S3Source:
+      type: object
+      required: [bucket, key, endpoint]
+      properties:
+        bucket:
+          type: string
+          example: disknext
+        key:
+          type: string
+          example: uploads/2026/04/video.mp4
+        endpoint:
+          type: string
+          format: uri
+          example: https://s3.example.com
+        access_key_id:
+          type: string
+        secret_access_key:
+          type: string
+        region:
+          type: string
+          default: auto
+
+    S3Output:
+      type: object
+      properties:
+        bucket:
+          type: string
+          example: disknext
+        key_prefix:
+          type: string
+          description: 输出文件 key 前缀，实际 key 为 `{key_prefix}{task_id}.{ext}`
+          example: thumbs/
+        endpoint:
+          type: string
+          format: uri
+        access_key_id:
+          type: string
+        secret_access_key:
+          type: string
+        region:
+          type: string
+          default: auto
+
+    CallbackConfig:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          description: 任务完成后回调的 URL
+          example: https://disknext.example.com/api/v1/callback/media/abc-uuid
+        method:
+          type: string
+          default: POST
+          enum: [POST, PUT, PATCH]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: 回调请求附加的 HTTP 头
+          example:
+            Authorization: Bearer xxx
+
+    ThumbnailParams:
+      type: object
+      properties:
+        width:
+          type: integer
+          default: 400
+          description: 缩略图最大宽度（px）
+        height:
+          type: integer
+          default: 300
+          description: 缩略图最大高度（px）
+        format:
+          type: string
+          default: webp
+          enum: [webp, jpeg, png]
+
+    MetadataParams:
+      type: object
+      properties:
+        namespaces:
+          type: array
+          items:
+            type: string
+            enum: [exif, stream, music]
+          description: 要提取的元数据命名空间
+          example: [stream, exif]
+
+    TranscodeParams:
+      type: object
+      properties:
+        max_width:
+          type: integer
+          default: 1920
+        max_height:
+          type: integer
+          default: 1080
+        max_size_mb:
+          type: integer
+          default: 50
+          description: 输出文件最大体积（MB），用于计算目标码率
+        video_codec:
+          type: string
+          default: libx264
+        preset:
+          type: string
+          default: fast
+          enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
+
+    TaskRequest:
+      type: object
+      required: [type, source]
+      properties:
+        type:
+          type: string
+          enum: [thumbnail, metadata, transcode]
+          description: 任务类型
+        source:
+          $ref: "#/components/schemas/S3Source"
+        output:
+          $ref: "#/components/schemas/S3Output"
+        callback:
+          $ref: "#/components/schemas/CallbackConfig"
+        thumbnail_params:
+          $ref: "#/components/schemas/ThumbnailParams"
+        metadata_params:
+          $ref: "#/components/schemas/MetadataParams"
+        transcode_params:
+          $ref: "#/components/schemas/TranscodeParams"
+
+    TaskResult:
+      type: object
+      properties:
+        mime_type:
+          type: string
+          example: video/mp4
+        metadata:
+          type: object
+          description: 按命名空间分组的元数据
+          additionalProperties: true
+          example:
+            stream:
+              width: 1920
+              height: 1080
+              duration: 120.5
+              video_codec: h264
+              bitrate: 5000000
+            sys:
+              content_hash: abc123...
+              size: 15728640
+        thumbnail:
+          $ref: "#/components/schemas/ThumbnailResult"
+        transcode:
+          $ref: "#/components/schemas/TranscodeResult"
+
+    ThumbnailResult:
+      type: object
+      properties:
+        generated:
+          type: boolean
+        key:
+          type: string
+          description: 缩略图在 S3 中的 key
+          example: thumbs/abc-uuid.webp
+        width:
+          type: integer
+        height:
+          type: integer
+        format:
+          type: string
+          example: webp
+        size:
+          type: integer
+          format: int64
+          description: 缩略图文件大小（字节）
+
+    TranscodeResult:
+      type: object
+      properties:
+        key:
+          type: string
+          description: 转码输出在 S3 中的 key
+        mime_type:
+          type: string
+          example: video/mp4
+        size:
+          type: integer
+          format: int64
+        content_hash:
+          type: string
+          description: SHA-256 哈希
+        width:
+          type: integer
+        height:
+          type: integer
+
+    TaskResponse:
+      type: object
+      required: [task_id, status, created_at]
+      properties:
+        task_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        result:
+          $ref: "#/components/schemas/TaskResult"
+        error:
+          type: string
+          description: 仅在 status=failed 时存在
+        created_at:
+          type: string
+          format: date-time
+
+    CallbackPayload:
+      description: |
+        media-gateway 回调调用方时发送的 payload，结构与 TaskResponse 相同。
+      allOf:
+        - $ref: "#/components/schemas/TaskResponse"
