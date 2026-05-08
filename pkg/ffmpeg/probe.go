@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 
 	jsoniter "github.com/json-iterator/go"
 
@@ -25,10 +26,27 @@ type ffprobeFormat struct {
 }
 
 type ffprobeStream struct {
-	CodecType string `json:"codec_type"`
-	CodecName string `json:"codec_name"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
+	CodecType  string `json:"codec_type"`
+	CodecName  string `json:"codec_name"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	RFrameRate string `json:"r_frame_rate"`
+	BitRate    string `json:"bit_rate"`
+	SampleRate string `json:"sample_rate"`
+}
+
+// parseFrameRate parses ffprobe r_frame_rate format "num/den" into float64.
+func parseFrameRate(s string) float64 {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) != 2 {
+		return 0
+	}
+	num, err1 := strconv.ParseFloat(parts[0], 64)
+	den, err2 := strconv.ParseFloat(parts[1], 64)
+	if err1 != nil || err2 != nil || den == 0 {
+		return 0
+	}
+	return num / den
 }
 
 // parseProbeOutput parses ffprobe JSON output into ProbeResult.
@@ -38,15 +56,8 @@ func parseProbeOutput(data []byte) (*model.ProbeResult, error) {
 		return nil, fmt.Errorf("parsing ffprobe output: %w", err)
 	}
 
-	duration, err := strconv.ParseFloat(output.Format.Duration, 64)
-	if err != nil {
-		return nil, fmt.Errorf("parsing duration %q: %w", output.Format.Duration, err)
-	}
-
-	bitrate, err := strconv.ParseInt(output.Format.BitRate, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("parsing bitrate %q: %w", output.Format.BitRate, err)
-	}
+	duration, _ := strconv.ParseFloat(output.Format.Duration, 64)
+	bitrate, _ := strconv.ParseInt(output.Format.BitRate, 10, 64)
 
 	result := &model.ProbeResult{
 		DurationSec: duration,
@@ -60,19 +71,19 @@ func parseProbeOutput(data []byte) (*model.ProbeResult, error) {
 			result.Width = s.Width
 			result.Height = s.Height
 			result.VideoCodec = s.CodecName
+			result.VideoFrameRate = parseFrameRate(s.RFrameRate)
+			result.VideoBitrate, _ = strconv.ParseInt(s.BitRate, 10, 64)
 		case "audio":
 			result.AudioCodec = s.CodecName
+			result.AudioBitrate, _ = strconv.ParseInt(s.BitRate, 10, 64)
+			result.AudioSampleRate, _ = strconv.Atoi(s.SampleRate)
 		}
-	}
-
-	if result.VideoCodec == "" {
-		return nil, fmt.Errorf("no video stream found")
 	}
 
 	return result, nil
 }
 
-// Probe runs ffprobe on inputPath and extracts video metadata.
+// Probe runs ffprobe on inputPath and extracts media metadata.
 func Probe(ctx context.Context, ffprobePath string, inputPath string) (*model.ProbeResult, error) {
 	cmd := exec.CommandContext(ctx, ffprobePath,
 		"-v", "quiet",

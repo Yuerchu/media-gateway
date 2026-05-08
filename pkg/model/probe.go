@@ -1,6 +1,6 @@
 package model
 
-// ProbeResult holds video metadata extracted by ffprobe.
+// ProbeResult holds media metadata extracted by ffprobe.
 type ProbeResult struct {
 	Width       int
 	Height      int
@@ -9,6 +9,11 @@ type ProbeResult struct {
 	AudioCodec  string
 	FormatName  string
 	Bitrate     int64
+
+	VideoFrameRate  float64
+	VideoBitrate    int64
+	AudioBitrate    int64
+	AudioSampleRate int
 }
 
 // TranscodeParams holds parameters for building the ffmpeg command.
