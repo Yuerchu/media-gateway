@@ -2,6 +2,8 @@ package audiotag
 
 import (
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/dhowden/tag"
 )
@@ -12,9 +14,14 @@ type Result struct {
 	Artist      string
 	Album       string
 	AlbumArtist string
+	Composer    string
 	Genre       string
 	Track       int
+	DiscNumber  int
 	Year        int
+	BPM         int
+	Lyrics      string
+	Comment     string
 }
 
 // Extract reads audio tags (ID3v2, Vorbis, MP4 atoms) from the reader.
@@ -26,14 +33,35 @@ func Extract(r io.ReadSeeker) *Result {
 	}
 
 	track, _ := m.Track()
+	disc, _ := m.Disc()
+
+	var bpm int
+	if raw := m.Raw(); raw != nil {
+		for _, key := range []string{"TBPM", "BPM", "bpm"} {
+			if v, ok := raw[key]; ok {
+				if s, ok := v.(string); ok {
+					s = strings.TrimSpace(s)
+					if n, err := strconv.Atoi(s); err == nil {
+						bpm = n
+						break
+					}
+				}
+			}
+		}
+	}
 
 	return &Result{
 		Title:       m.Title(),
 		Artist:      m.Artist(),
 		Album:       m.Album(),
 		AlbumArtist: m.AlbumArtist(),
+		Composer:    m.Composer(),
 		Genre:       m.Genre(),
 		Track:       track,
+		DiscNumber:  disc,
 		Year:        m.Year(),
+		BPM:         bpm,
+		Lyrics:      m.Lyrics(),
+		Comment:     m.Comment(),
 	}
 }
