@@ -14,6 +14,8 @@ type ProbeResult struct {
 	VideoBitrate    int64
 	AudioBitrate    int64
 	AudioSampleRate int
+	AudioChannels   int
+	BitsPerRawSample int
 }
 
 // TranscodeParams holds parameters for building the ffmpeg command.

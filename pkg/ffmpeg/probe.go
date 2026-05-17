@@ -26,13 +26,15 @@ type ffprobeFormat struct {
 }
 
 type ffprobeStream struct {
-	CodecType  string `json:"codec_type"`
-	CodecName  string `json:"codec_name"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	RFrameRate string `json:"r_frame_rate"`
-	BitRate    string `json:"bit_rate"`
-	SampleRate string `json:"sample_rate"`
+	CodecType       string `json:"codec_type"`
+	CodecName       string `json:"codec_name"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	RFrameRate      string `json:"r_frame_rate"`
+	BitRate         string `json:"bit_rate"`
+	SampleRate      string `json:"sample_rate"`
+	Channels        int    `json:"channels"`
+	BitsPerRawSample string `json:"bits_per_raw_sample"`
 }
 
 // parseFrameRate parses ffprobe r_frame_rate format "num/den" into float64.
@@ -77,6 +79,8 @@ func parseProbeOutput(data []byte) (*model.ProbeResult, error) {
 			result.AudioCodec = s.CodecName
 			result.AudioBitrate, _ = strconv.ParseInt(s.BitRate, 10, 64)
 			result.AudioSampleRate, _ = strconv.Atoi(s.SampleRate)
+			result.AudioChannels = s.Channels
+			result.BitsPerRawSample, _ = strconv.Atoi(s.BitsPerRawSample)
 		}
 	}
 
