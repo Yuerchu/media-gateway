@@ -174,9 +174,7 @@ func TestDownloadOne_WithRewrite(t *testing.T) {
 }
 
 func TestFiles_Concurrent(t *testing.T) {
-	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
 		w.Write([]byte("ok"))
 	}))
 	defer server.Close()
