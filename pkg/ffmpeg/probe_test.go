@@ -63,7 +63,9 @@ func TestParseProbeOutput(t *testing.T) {
 					"codec_type": "audio",
 					"codec_name": "aac",
 					"bit_rate": "128000",
-					"sample_rate": "44100"
+					"sample_rate": "44100",
+					"channels": 2,
+					"bits_per_raw_sample": "16"
 				}
 			]
 		}`)
@@ -100,6 +102,12 @@ func TestParseProbeOutput(t *testing.T) {
 		}
 		if result.AudioSampleRate != 44100 {
 			t.Errorf("AudioSampleRate = %d, want 44100", result.AudioSampleRate)
+		}
+		if result.AudioChannels != 2 {
+			t.Errorf("AudioChannels = %d, want 2", result.AudioChannels)
+		}
+		if result.BitsPerRawSample != 16 {
+			t.Errorf("BitsPerRawSample = %d, want 16", result.BitsPerRawSample)
 		}
 		if result.FormatName != "mov,mp4,m4a,3gp,3g2,mj2" {
 			t.Errorf("FormatName = %s, want mov,mp4,m4a,3gp,3g2,mj2", result.FormatName)
