@@ -81,8 +81,13 @@ func main() {
 		}
 	}()
 
-	// Setup HTTP server
-	router := api.SetupRouter(cfg, manager, worker)
+	// Setup HTTP server. A capability contract that cannot be built is a
+	// startup failure, in the same class as invalid configuration.
+	router, err := api.SetupRouter(cfg, manager, worker)
+	if err != nil {
+		slog.Error("Failed to set up router", "error", err)
+		os.Exit(1)
+	}
 
 	srv := &http.Server{
 		Addr:         cfg.Listen,

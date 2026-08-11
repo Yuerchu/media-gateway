@@ -20,6 +20,8 @@ tags:
     description: 同步工具端点（亚秒返回）
   - name: tasks
     description: 异步媒体处理任务
+  - name: capabilities
+    description: 能力契约
 
 security:
   - hmac: []
@@ -104,6 +106,36 @@ paths:
                 $ref: "#/components/schemas/ImageMetaResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+
+  /api/v1/capabilities:
+    get:
+      tags: [capabilities]
+      summary: 能力契约
+      description: |
+        返回一份 JSON Schema 2020-12 文档，声明本部署接受什么样的源文件、
+        每个任务类型接受什么参数、以及对产物承诺什么。
+
+        文档在启动时按运行时配置渲染一次并缓存，因此 `MG_FFMPEG_MAX_SOURCE_SIZE`
+        这类环境变量的值会如实反映在文档里。带 ETag，未变更时返回 304。
+
+        产物承诺分三档，含义随文档一起下发（`x-guarantee-semantics`）：
+        `exact` 必定满足、`best_effort` 尽力且失败时报错、`none` 完全不作用于该维度。
+        `best_effort` 会附带计算公式与常量，调用方可据此提前判断自己的请求是否可达。
+
+        **注意**：文档如实描述当前行为而非应有行为。`thumbnail` 的 `height` 与
+        `format` 参数会被接受但不生效（见 `x-ignored-properties`），部分本属请求
+        问题的拒绝目前返回 500（见 `x-status-caveat`）。
+      operationId: getCapabilities
+      responses:
+        "200":
+          description: 能力契约
+          content:
+            application/schema+json:
+              schema:
+                type: object
+                description: JSON Schema 2020-12 文档
+        "304":
+          description: 与 If-None-Match 一致，内容未变更
 
   /api/v1/tasks:
     post:

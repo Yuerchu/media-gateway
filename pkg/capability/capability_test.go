@@ -79,7 +79,9 @@ func TestNewOperation_Rejects(t *testing.T) {
 			bend: func(s *OperationSpec) { s.Name = "" },
 		},
 		{
-			name: "produces nothing",
+			// Producing nothing is legitimate on its own; promising a content
+			// type while producing nothing is not.
+			name: "promises a content type but produces nothing",
 			bend: func(s *OperationSpec) { s.Produces = nil },
 		},
 		{
@@ -141,6 +143,23 @@ func TestNewOperation_AcceptsValidSpec(t *testing.T) {
 	op := mustOperation(t, validSpec())
 	if op.Name() != "transcode" {
 		t.Errorf("Name() = %q, want %q", op.Name(), "transcode")
+	}
+}
+
+func TestNewOperation_AcceptsAnOperationThatWritesNothing(t *testing.T) {
+	// Extracting metadata produces no artifact. Refusing to describe such an
+	// operation would push it out of the contract entirely, which is the one
+	// outcome worse than describing it imperfectly.
+	spec := validSpec()
+	spec.Produces = nil
+	delete(spec.Guarantees, DimContentType)
+
+	op := mustOperation(t, spec)
+	if got := len(op.Produces()); got != 0 {
+		t.Errorf("Produces() has %d entries, want none", got)
+	}
+	if got := op.Guarantee(DimContentType); got != GuaranteeNone {
+		t.Errorf("Guarantee(content_type) = %q, want %q", got, GuaranteeNone)
 	}
 }
 

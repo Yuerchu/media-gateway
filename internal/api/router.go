@@ -9,7 +9,11 @@ import (
 )
 
 // SetupRouter creates and configures the Gin engine.
-func SetupRouter(cfg *config.Config, manager *task.Manager, worker *task.Worker) *gin.Engine {
+//
+// It returns an error because the capability contract is rendered here, at
+// startup, so that a contract which cannot be built stops the process instead
+// of surfacing later as a failing endpoint.
+func SetupRouter(cfg *config.Config, manager *task.Manager, worker *task.Worker) (*gin.Engine, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -43,5 +47,16 @@ func SetupRouter(cfg *config.Config, manager *task.Manager, worker *task.Worker)
 	v1.GET("/tasks/:id", taskH.GetTask)
 	v1.DELETE("/tasks/:id", taskH.DeleteTask)
 
-	return r
+	// Capability contract. Registered inside the authenticated group on
+	// purpose: it describes the task endpoints, its only readers are the
+	// callers of those endpoints, and every one of them already holds the
+	// secret. Serving deployment limits to anyone who can reach the port buys
+	// nothing in exchange.
+	capabilityH, err := NewCapabilityHandler(cfg)
+	if err != nil {
+		return nil, err
+	}
+	v1.GET("/capabilities", capabilityH.Get)
+
+	return r, nil
 }

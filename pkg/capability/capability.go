@@ -141,6 +141,19 @@ type IgnoredField struct {
 // arrive in a callback, or be fetched later from a task record. Grading those
 // fields is the only way to say things like "this key is always present, that
 // one only when probing succeeded".
+//
+// The grades read differently here than they do for an output dimension, so to
+// be explicit rather than let a reader guess:
+//
+//   - exact — always present, and measured from the actual result.
+//   - best_effort — present when it could be determined, absent otherwise.
+//   - none — carries no measurement. A field echoing back what the caller
+//     asked for is the usual case; Note should then say what the value really
+//     is, because "none" alone would suggest the key is missing when it is not.
+//
+// Reusing one vocabulary for two axes is a compromise. Splitting it would mean
+// a second near-identical enum, and the pairing with Note carries what would
+// otherwise be lost.
 type ResultGuarantee struct {
 	Pointer   string    `json:"pointer"`
 	Guarantee Guarantee `json:"guarantee"`
@@ -300,6 +313,11 @@ func NewOperation(spec OperationSpec) (Operation, error) {
 	if err := validateRejections(spec.Name, spec.Rejections); err != nil {
 		return Operation{}, err
 	}
+	if len(produces) == 0 && spec.Guarantees[DimContentType] == GuaranteeExact {
+		return Operation{}, fmt.Errorf(
+			"operation %q promises an exact content type but produces nothing", spec.Name,
+		)
+	}
 
 	return Operation{
 		name:             spec.Name,
@@ -313,10 +331,11 @@ func NewOperation(spec OperationSpec) (Operation, error) {
 }
 
 // normalizeProduces validates the output MIME list and returns a sorted copy.
+//
+// An empty list is allowed: an operation may legitimately write no artifact at
+// all — extracting metadata, for instance. What is not allowed is promising a
+// content type while producing nothing, which is checked separately.
 func normalizeProduces(opName string, produces []string) ([]string, error) {
-	if len(produces) == 0 {
-		return nil, fmt.Errorf("operation %q produces nothing: express that by not registering it", opName)
-	}
 	seen := make(map[string]bool, len(produces))
 	out := make([]string, 0, len(produces))
 	for _, mime := range produces {
@@ -385,16 +404,29 @@ func validateRejections(opName string, rejections []Rejection) error {
 
 func cloneSourceRequirements(src SourceRequirements) SourceRequirements {
 	return SourceRequirements{
-		Streams:      append([]string(nil), src.Streams...),
+		Streams:      cloneStrings(src.Streams),
 		MinDimension: src.MinDimension,
 	}
+}
+
+// Accessors return empty, non-nil slices rather than nil.
+//
+// A nil slice encodes as JSON null, and a consumer looping over what the
+// contract says is a list should not have to handle null as a third case. The
+// distinction only shows up for an operation that legitimately has none of
+// something — one that writes no artifact, say — which is exactly where a
+// careless consumer would break.
+func cloneStrings(src []string) []string {
+	out := make([]string, len(src))
+	copy(out, src)
+	return out
 }
 
 // Name returns the operation's identifier.
 func (o Operation) Name() string { return o.name }
 
 // Produces returns a copy of the output MIME list, sorted.
-func (o Operation) Produces() []string { return append([]string(nil), o.produces...) }
+func (o Operation) Produces() []string { return cloneStrings(o.produces) }
 
 // Guarantees returns a copy of the graded dimensions, sorted by dimension.
 func (o Operation) Guarantees() []DimensionGuarantee {
@@ -424,17 +456,23 @@ func (o Operation) Guarantee(dim Dimension) Guarantee {
 
 // IgnoredFields returns a copy of the accepted-but-unread request fields.
 func (o Operation) IgnoredFields() []IgnoredField {
-	return append([]IgnoredField(nil), o.ignoredFields...)
+	out := make([]IgnoredField, len(o.ignoredFields))
+	copy(out, o.ignoredFields)
+	return out
 }
 
 // ResultGuarantees returns a copy of the graded result-payload fields.
 func (o Operation) ResultGuarantees() []ResultGuarantee {
-	return append([]ResultGuarantee(nil), o.resultGuarantees...)
+	out := make([]ResultGuarantee, len(o.resultGuarantees))
+	copy(out, o.resultGuarantees)
+	return out
 }
 
 // Rejections returns a copy of the refused inputs.
 func (o Operation) Rejections() []Rejection {
-	return append([]Rejection(nil), o.rejections...)
+	out := make([]Rejection, len(o.rejections))
+	copy(out, o.rejections)
+	return out
 }
 
 // SourceRequires returns a copy of the operation's preconditions on the source.
@@ -479,4 +517,10 @@ type Document struct {
 	// Operations are the callable capabilities, in the order they should be
 	// presented.
 	Operations []Operation
+
+	// Extensions are x- annotations describing the service as a whole rather
+	// than any one operation — queue behaviour, the shape of the request
+	// envelope, and so on. They are merged into the rendered root, and a name
+	// the renderer already owns is an error rather than a silent overwrite.
+	Extensions map[string]any
 }

@@ -3,6 +3,7 @@ package capability
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -134,6 +135,29 @@ func (o Operation) WithIgnoredFields(fields []IgnoredField) Operation {
 	return updated
 }
 
+// WithName exposes the operation under a different name, returning a copy. The
+// receiver is not modified.
+//
+// The name is part of the request surface — it is what a caller puts in the
+// request to select the operation — so the same implementation reasonably
+// appears under different names in different services. media-gateway's
+// "thumbnail" task, for one, is the extract_frame operation.
+func (o Operation) WithName(name string) Operation {
+	updated := o
+	updated.name = name
+	return updated
+}
+
+// WithResultGuarantees grades fields of this service's result payload,
+// returning a copy. The receiver is not modified.
+//
+// The payload shape belongs to the service, so the grading does too.
+func (o Operation) WithResultGuarantees(guarantees []ResultGuarantee) Operation {
+	updated := o
+	updated.resultGuarantees = append([]ResultGuarantee(nil), guarantees...)
+	return updated
+}
+
 // WithRejections records the inputs this service refuses, returning a copy.
 // The receiver is not modified.
 //
@@ -183,16 +207,87 @@ func (d Document) Render() (*Schema, error) {
 		defs[op.Name()] = rendered
 	}
 
-	return &Schema{
-		Dialect: Dialect,
-		ID:      fmt.Sprintf("https://%s/schemas/capabilities/%s", d.ServiceID, d.Version),
-		Title:   d.Title,
-		Defs:    defs,
-		Extensions: map[string]any{
-			"x-contract-version": d.Version,
-			"x-operations":       operationNames(d.Operations),
-		},
-	}, nil
+	extensions := map[string]any{
+		"x-contract-version": d.Version,
+		"x-operations":       operationNames(d.Operations),
+	}
+	for name, value := range d.Extensions {
+		if !strings.HasPrefix(name, "x-") {
+			return nil, fmt.Errorf("document extension %q must start with \"x-\"", name)
+		}
+		if _, taken := extensions[name]; taken {
+			return nil, fmt.Errorf("document extension %q collides with a rendered annotation", name)
+		}
+		extensions[name] = value
+	}
+
+	rendered := &Schema{
+		Dialect:    Dialect,
+		ID:         fmt.Sprintf("https://%s/schemas/capabilities/%s", d.ServiceID, d.Version),
+		Title:      d.Title,
+		Defs:       defs,
+		Extensions: extensions,
+	}
+	if err := verifySchemaPaths(rendered, d.Operations); err != nil {
+		return nil, err
+	}
+	return rendered, nil
+}
+
+// verifySchemaPaths checks that every rejection points somewhere real.
+//
+// Without this, schema_path is decoration: it reads like a pointer, nothing
+// confirms it resolves, and it rots silently the first time the document
+// layout moves. Verifying at render time makes a stale pointer a startup
+// failure for whoever publishes the contract, which is the only party in a
+// position to fix it.
+func verifySchemaPaths(rendered *Schema, operations []Operation) error {
+	encoded, err := json.Marshal(rendered)
+	if err != nil {
+		return fmt.Errorf("encoding document to verify schema paths: %w", err)
+	}
+	var decoded any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return fmt.Errorf("re-reading document to verify schema paths: %w", err)
+	}
+
+	for _, op := range operations {
+		for _, rejection := range op.Rejections() {
+			if err := resolvePointer(decoded, rejection.SchemaPath); err != nil {
+				return fmt.Errorf(
+					"operation %q rejection %q: schema_path %q does not resolve: %w",
+					op.Name(), rejection.Code, rejection.SchemaPath, err,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+// resolvePointer walks a JSON Pointer (RFC 6901) through a decoded document.
+func resolvePointer(root any, pointer string) error {
+	if pointer == "" {
+		return nil
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return fmt.Errorf("a json pointer must start with %q", "/")
+	}
+
+	current := root
+	for _, segment := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
+		// RFC 6901 escaping: ~1 decodes to "/" and ~0 to "~", in that order.
+		key := strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~")
+		object, ok := current.(map[string]any)
+		if !ok {
+			return fmt.Errorf("segment %q applied to a %T rather than an object", key, current)
+		}
+		value, ok := object[key]
+		if !ok {
+			return fmt.Errorf("segment %q not found", key)
+		}
+		current = value
+	}
+	return nil
 }
 
 // operationNames lists the operations in declaration order, so a consumer can
@@ -220,20 +315,43 @@ func (d Document) RenderJSON() ([]byte, error) {
 }
 
 // renderSourceLimits renders the ingest-wide preconditions.
+//
+// A service with no container allowlist gets no container_format property at
+// all, rather than one carrying an empty enum. An empty enum accepts nothing,
+// which is the exact opposite of what "no allowlist" means, and a consumer
+// applying it literally would reject every source there is.
 func renderSourceLimits(limits SourceLimits) *Schema {
 	properties := map[string]*Schema{
-		"container_format": {
-			Type:        "string",
-			Description: "Container format as the probe reports it.",
-			Enum:        append([]string(nil), limits.ContainerFormats...),
-		},
 		"size_bytes": {
 			Type:    "integer",
 			Minimum: Float(1),
 			Maximum: Float(float64(limits.MaxSizeBytes)),
 		},
 	}
-	required := []string{"container_format", "size_bytes"}
+	required := []string{"size_bytes"}
+	extensions := map[string]any{}
+
+	if len(limits.ContainerFormats) > 0 {
+		properties["container_format"] = &Schema{
+			Type:        "string",
+			Description: "Container format as the probe reports it.",
+			Enum:        append([]string(nil), limits.ContainerFormats...),
+		}
+		required = append(required, "container_format")
+		extensions["x-authoritative-gate"] = map[string]any{
+			"property": "container_format",
+			"reason": "A declared content type is whatever the uploader claimed; " +
+				"the container format is what the bytes turned out to be. They disagree " +
+				"often enough that only the latter can be the gate.",
+		}
+	} else {
+		extensions["x-authoritative-gate"] = map[string]any{
+			"property": nil,
+			"reason": "This service keeps no container allowlist: anything the probe can " +
+				"read is accepted, and an unreadable source fails during processing rather " +
+				"than being refused up front.",
+		}
+	}
 
 	if len(limits.ContentTypes) > 0 {
 		properties["content_type"] = &Schema{
@@ -247,19 +365,13 @@ func renderSourceLimits(limits SourceLimits) *Schema {
 		}
 	}
 
+	sort.Strings(required)
 	return &Schema{
 		Title:      "Source preconditions",
 		Type:       "object",
 		Properties: properties,
 		Required:   required,
-		Extensions: map[string]any{
-			"x-authoritative-gate": map[string]any{
-				"property": "container_format",
-				"reason": "A declared content type is whatever the uploader claimed; " +
-					"the container format is what the bytes turned out to be. They disagree " +
-					"often enough that only the latter can be the gate.",
-			},
-		},
+		Extensions: extensions,
 	}
 }
 

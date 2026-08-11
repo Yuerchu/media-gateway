@@ -137,20 +137,43 @@ func TestRender_RejectsOperationNamedSource(t *testing.T) {
 	}
 }
 
-func TestRenderJSON_SchemaPathsResolve(t *testing.T) {
-	// Without this the schema_path field is decoration: it reads like a
-	// pointer, nothing checks that it points anywhere, and it rots the first
-	// time the document layout moves.
-	source := testDocument(t)
-	doc := decodeDocument(t, source)
-	for _, op := range source.Operations {
-		for _, rejection := range op.Rejections() {
-			t.Run(rejection.Code, func(t *testing.T) {
-				if got := navigate(t, doc, rejection.SchemaPath); got == nil {
-					t.Errorf("schema_path %q resolves to null", rejection.SchemaPath)
-				}
-			})
-		}
+func TestRender_RejectsUnresolvableSchemaPath(t *testing.T) {
+	// schema_path is verified at render time rather than in a test, so a stale
+	// pointer stops the service that publishes the contract instead of shipping
+	// as a field that reads like a pointer and points nowhere.
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "missing segment", path: "/$defs/source/properties/no_such_property"},
+		{name: "wrong operation", path: "/$defs/no_such_operation/properties/target_mime"},
+		{name: "descends into a scalar", path: "/$defs/source/title/nope"},
+		{name: "not a pointer", path: "$defs/source"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := multiProduceSpec()
+			spec.Rejections = []Rejection{{
+				Code:       "dangling",
+				Stage:      RejectStageRequest,
+				SchemaPath: tt.path,
+				HTTPStatus: 400,
+				Summary:    "points nowhere",
+			}}
+			doc := testDocument(t)
+			doc.Operations = []Operation{mustOperation(t, spec)}
+			if _, err := doc.Render(); err == nil {
+				t.Errorf("Render() = nil error for schema_path %q, want a rejection", tt.path)
+			}
+		})
+	}
+}
+
+func TestRender_AcceptsResolvableSchemaPaths(t *testing.T) {
+	// The mirror of the test above: the fixture's own paths must survive, or
+	// the check is just refusing everything.
+	if _, err := testDocument(t).Render(); err != nil {
+		t.Errorf("Render() = %v, want no error", err)
 	}
 }
 
@@ -223,6 +246,35 @@ func TestSchemaMarshalJSON_RejectsBadExtensions(t *testing.T) {
 				t.Error("Marshal() = nil error, want a rejection")
 			}
 		})
+	}
+}
+
+func TestRenderJSON_EmptyListsAreNotNull(t *testing.T) {
+	// A nil slice encodes as null, and a consumer looping over what the
+	// contract calls a list should not have to handle null as a third case.
+	// The distinction only surfaces for an operation that has none of
+	// something — one that writes no artifact, say — which is precisely where
+	// a careless consumer would break.
+	// Every list emptied at once, so each assertion below is actually
+	// exercising the nil case rather than riding on fixture leftovers.
+	spec := multiProduceSpec()
+	spec.Produces = nil
+	spec.Guarantees = nil
+	spec.BestEffortModels = nil
+	spec.Rejections = nil
+
+	doc := testDocument(t)
+	doc.Operations = []Operation{mustOperation(t, spec)}
+	decoded := decodeDocument(t, doc)
+
+	for _, pointer := range []string{
+		"/$defs/transcode/x-produces",
+		"/$defs/transcode/x-output-guarantees",
+		"/$defs/transcode/x-rejections",
+	} {
+		if got := navigate(t, decoded, pointer); got == nil {
+			t.Errorf("%s encoded as null, want an empty list", pointer)
+		}
 	}
 }
 
