@@ -11,6 +11,25 @@ import (
 	"github.com/yuerchu/media-gateway/pkg/model"
 )
 
+// Bitrate budget constants. CalculateTargetBitrate and BuildTranscodeArgs must
+// both derive from these: the audio allowance subtracted from the size budget
+// and the audio bitrate actually encoded are the same number, and keeping them
+// as two independent literals let them drift silently.
+const (
+	// AudioBitrateBps is the bitrate audio is encoded at, and the allowance
+	// reserved for audio when computing the video bitrate budget.
+	AudioBitrateBps int64 = 128000
+
+	// MinVideoBitrateBps is the floor applied to the computed video bitrate.
+	// Reaching it means the size budget cannot be honoured — the output will
+	// exceed maxSizeBytes. See TranscodeCapability for how this is declared.
+	MinVideoBitrateBps int64 = 100000
+
+	// ContainerOverheadRatio is the fraction of the size budget available to
+	// media data; the remainder covers container overhead.
+	ContainerOverheadRatio = 0.95
+)
+
 // CalculateTargetDimensions computes target width/height preserving aspect ratio.
 // Result dimensions are always even (H.264 requirement).
 func CalculateTargetDimensions(srcW, srcH, maxW, maxH int) (int, int) {
@@ -39,17 +58,21 @@ func ensureEven(n int) int {
 }
 
 // CalculateTargetBitrate computes video bitrate to fit within maxSizeBytes.
-// Reserves 128kbps for audio and 5% for container overhead.
-// Returns minimum 100kbps if calculation yields less.
+// Reserves AudioBitrateBps for audio and ContainerOverheadRatio for container
+// overhead.
+//
+// The result is clamped to MinVideoBitrateBps, so fitting maxSizeBytes is a
+// best effort, not a guarantee: a long source with a small size budget yields a
+// computed bitrate below the floor, and the encode then overshoots the budget.
+// Callers that must not overshoot have to verify the output themselves.
 func CalculateTargetBitrate(maxSizeBytes int64, durationSec float64) int64 {
 	if durationSec <= 0 {
-		return 100000
+		return MinVideoBitrateBps
 	}
-	totalBitrate := int64(float64(maxSizeBytes) * 8 * 0.95 / durationSec)
-	audioBitrate := int64(128000)
-	videoBitrate := totalBitrate - audioBitrate
-	if videoBitrate < 100000 {
-		videoBitrate = 100000
+	totalBitrate := int64(float64(maxSizeBytes) * 8 * ContainerOverheadRatio / durationSec)
+	videoBitrate := totalBitrate - AudioBitrateBps
+	if videoBitrate < MinVideoBitrateBps {
+		videoBitrate = MinVideoBitrateBps
 	}
 	return videoBitrate
 }
@@ -65,7 +88,10 @@ func BuildTranscodeArgs(params *model.TranscodeParams) []string {
 		"-maxrate", strconv.FormatInt(params.TargetBitrate*2, 10),
 		"-bufsize", strconv.FormatInt(params.TargetBitrate*4, 10),
 		"-c:a", params.AudioCodec,
-		"-b:a", "128k",
+		// Derived from AudioBitrateBps so the encoded audio bitrate and the
+		// allowance CalculateTargetBitrate subtracts can never disagree.
+		// ffmpeg's "k" suffix is 1000, matching the bps constant exactly.
+		"-b:a", strconv.FormatInt(AudioBitrateBps/1000, 10) + "k",
 		"-vf", fmt.Sprintf("scale=%d:%d", params.TargetWidth, params.TargetHeight),
 		"-movflags", "+faststart",
 	}

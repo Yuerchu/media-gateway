@@ -1,6 +1,8 @@
 package ffmpeg
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/yuerchu/media-gateway/pkg/model"
@@ -139,9 +141,9 @@ func TestCalculateTargetBitrate(t *testing.T) {
 				t.Errorf("bitrate %d < expected minimum %d", got, tt.wantMinimum)
 			}
 			if tt.duration > 0 && tt.maxSize > 0 {
-				totalBits := int64(float64(tt.maxSize) * 8 * 0.95 / tt.duration)
-				maxExpected := totalBits - 128000
-				if maxExpected > 100000 && got != maxExpected {
+				totalBits := int64(float64(tt.maxSize) * 8 * ContainerOverheadRatio / tt.duration)
+				maxExpected := totalBits - AudioBitrateBps
+				if maxExpected > MinVideoBitrateBps && got != maxExpected {
 					t.Errorf("bitrate %d != expected %d", got, maxExpected)
 				}
 			}
@@ -153,10 +155,51 @@ func TestCalculateTargetBitrate_AudioReserve(t *testing.T) {
 	maxSize := int64(50 * 1024 * 1024)
 	dur := 60.0
 	bitrate := CalculateTargetBitrate(maxSize, dur)
-	totalBitrate := int64(float64(maxSize) * 8 * 0.95 / dur)
-	expected := totalBitrate - 128000
+	totalBitrate := int64(float64(maxSize) * 8 * ContainerOverheadRatio / dur)
+	expected := totalBitrate - AudioBitrateBps
 	if bitrate != expected {
-		t.Errorf("got %d, want %d (total %d minus 128000 audio)", bitrate, expected, totalBitrate)
+		t.Errorf("got %d, want %d (total %d minus %d audio)", bitrate, expected, totalBitrate, AudioBitrateBps)
+	}
+}
+
+// TestBuildTranscodeArgs_AudioBitrateMatchesConstant parses the -b:a value back
+// to bits per second and compares it to AudioBitrateBps. Before these were
+// unified, the encoded audio bitrate and the allowance CalculateTargetBitrate
+// subtracts from the size budget were two unrelated literals that could drift
+// without anything noticing.
+func TestBuildTranscodeArgs_AudioBitrateMatchesConstant(t *testing.T) {
+	args := BuildTranscodeArgs(&model.TranscodeParams{
+		InputPath:     "/tmp/in.mp4",
+		OutputPath:    "/tmp/out.mp4",
+		TargetWidth:   1280,
+		TargetHeight:  720,
+		TargetBitrate: 2000000,
+		VideoCodec:    "libx264",
+		AudioCodec:    "aac",
+		Preset:        "medium",
+	})
+
+	var raw string
+	for i, a := range args {
+		if a == "-b:a" {
+			if i+1 >= len(args) {
+				t.Fatal("-b:a flag has no value")
+			}
+			raw = args[i+1]
+			break
+		}
+	}
+	if raw == "" {
+		t.Fatal("-b:a flag not found")
+	}
+
+	// ffmpeg's "k" suffix is 1000, not 1024.
+	kbps, err := strconv.ParseInt(strings.TrimSuffix(raw, "k"), 10, 64)
+	if err != nil {
+		t.Fatalf("parsing -b:a value %q: %v", raw, err)
+	}
+	if got := kbps * 1000; got != AudioBitrateBps {
+		t.Errorf("-b:a is %s (%d bps), want AudioBitrateBps (%d bps)", raw, got, AudioBitrateBps)
 	}
 }
 
