@@ -122,6 +122,32 @@ func (o Operation) WithRequestSchema(schema *Schema) Operation {
 // RequestSchema returns the attached request-body schema, or nil.
 func (o Operation) RequestSchema() *Schema { return o.requestSchema }
 
+// WithIgnoredFields records request fields this service accepts and never
+// reads, returning a copy. The receiver is not modified.
+//
+// Like the request schema this is a property of the service rather than of the
+// implementation behind it: a field can only be ignored by something that
+// accepts it in the first place.
+func (o Operation) WithIgnoredFields(fields []IgnoredField) Operation {
+	updated := o
+	updated.ignoredFields = append([]IgnoredField(nil), fields...)
+	return updated
+}
+
+// WithRejections records the inputs this service refuses, returning a copy.
+// The receiver is not modified.
+//
+// Rejections carry a transport status and name request properties, so they
+// belong to the service rather than to the library function underneath.
+func (o Operation) WithRejections(rejections []Rejection) (Operation, error) {
+	if err := validateRejections(o.name, rejections); err != nil {
+		return Operation{}, err
+	}
+	updated := o
+	updated.rejections = append([]Rejection(nil), rejections...)
+	return updated, nil
+}
+
 // sourceDefName is the $defs key holding the ingest-wide preconditions.
 // Operations sit alongside it under their own names, so no operation may claim
 // this one.

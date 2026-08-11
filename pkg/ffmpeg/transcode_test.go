@@ -68,6 +68,10 @@ func TestCalculateTargetDimensions(t *testing.T) {
 			wantW: 640, wantH: 480,
 		},
 		{
+			// Rounding down to even collapses a 1px edge to nothing, and the
+			// resulting "scale=0:0" fails inside the encoder saying nothing
+			// about the real cause. TranscodeCapability declares a MinDimension
+			// of 2 so callers reject such a source instead of discovering this.
 			name: "1x1 source",
 			srcW: 1, srcH: 1, maxW: 1920, maxH: 1080,
 			wantW: 0, wantH: 0,

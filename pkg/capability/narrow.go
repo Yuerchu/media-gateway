@@ -42,9 +42,13 @@ var (
 // relied on the stronger promise. It reads like narrowing only because "narrow"
 // gets heard as "make less capable". Strengthening is closed off for the
 // opposite reason: a deployment policy is never in a position to promise
-// something the implementation cannot do. The same applies to IgnoredFields
-// and BestEffortModel, which are statements of fact about the implementation
+// something the implementation cannot do. The same applies to BestEffortModel
+// and SourceRequires, which are statements of fact about the implementation
 // rather than policy knobs.
+//
+// The request surface — schema, ignored fields, rejections — is not covered by
+// any of this. It belongs to the service rather than the implementation and is
+// supplied outright through the With* methods.
 //
 // None of this needs a runtime check. Guarantees are unexported and the result
 // is built from the receiver, so the type system enforces it.

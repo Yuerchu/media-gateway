@@ -89,10 +89,10 @@ func TestNarrow_PreservesGuarantees(t *testing.T) {
 	}
 }
 
-func TestNarrow_PreservesImplementationFacts(t *testing.T) {
-	// Ignored fields, rejections and source requirements describe what the
-	// implementation does, not what the deployment allows, so narrowing leaves
-	// them alone too.
+func TestNarrow_PreservesEverythingElse(t *testing.T) {
+	// Narrow restricts the produced set and nothing more. Source requirements
+	// are implementation facts a policy may not restate; the request surface is
+	// supplied outright through the With* methods rather than narrowed.
 	spec := multiProduceSpec()
 	spec.IgnoredFields = []IgnoredField{{Name: "fit_mode", Reason: "never read"}}
 	spec.SourceRequires = SourceRequirements{Streams: []string{"video"}, MinDimension: 2}

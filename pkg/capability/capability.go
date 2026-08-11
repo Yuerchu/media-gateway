@@ -125,9 +125,10 @@ type DimensionGuarantee struct {
 // IgnoredField records a request field the operation accepts but never reads.
 //
 // Recording it is the difference between a caller learning about it from the
-// contract and learning about it from a support ticket. An ignored field is a
-// statement of fact about the implementation, so a deployment policy cannot
-// add or remove one.
+// contract and learning about it from a support ticket. It belongs to the
+// request surface rather than to the implementation — the same library
+// function is reached through different request bodies in different services —
+// so the policy layer supplies it. See Operation.WithIgnoredFields.
 type IgnoredField struct {
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
@@ -165,6 +166,10 @@ const (
 // apart from "this service is broken" without matching on error strings. Code
 // is echoed in error responses so the classification survives translation and
 // rewording.
+//
+// Rejections belong to the request surface: they carry a transport status and
+// name request properties, neither of which a library function knows about.
+// The policy layer supplies them. See Operation.WithRejections.
 type Rejection struct {
 	// Code is a stable machine-readable identifier. Never reuse or repurpose
 	// one; consumers branch on it.
@@ -244,9 +249,19 @@ type OperationSpec struct {
 
 // Operation is one callable capability.
 //
-// Every field is unexported. A deployment policy is entitled to restrict what
-// an operation accepts and produces, but not to restate what the
-// implementation promises, and putting the promises out of reach is what turns
+// It carries two kinds of thing, and the split is the point:
+//
+//   - What the implementation promises about its output and demands of its
+//     input — Produces, Guarantees, SourceRequires. These are declared next to
+//     the code that implements them and a deployment policy may not restate
+//     them. Narrow can shrink Produces; nothing can touch the rest.
+//   - How a particular service exposes it over the wire — the request schema,
+//     which request fields are accepted and ignored, and which rejections the
+//     transport returns. The same library function is reached through
+//     different request bodies in different services, so the policy layer
+//     supplies these through the With* methods.
+//
+// Every field is unexported so the first group is out of reach, which turns
 // that rule from a comment into something the compiler enforces. Build one
 // with NewOperation, next to the code it describes.
 type Operation struct {
