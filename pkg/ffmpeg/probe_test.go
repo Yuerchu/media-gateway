@@ -57,7 +57,8 @@ func TestParseProbeOutput(t *testing.T) {
 					"width": 1920,
 					"height": 1080,
 					"r_frame_rate": "30/1",
-					"bit_rate": "4800000"
+					"bit_rate": "4800000",
+					"side_data_list": [{"rotation": -90}]
 				},
 				{
 					"codec_type": "audio",
@@ -93,6 +94,12 @@ func TestParseProbeOutput(t *testing.T) {
 		}
 		if result.VideoFrameRate != 30.0 {
 			t.Errorf("VideoFrameRate = %f, want 30.0", result.VideoFrameRate)
+		}
+		if !result.HasAudio {
+			t.Error("HasAudio = false, want true")
+		}
+		if result.Rotation != -90 {
+			t.Errorf("Rotation = %d, want -90", result.Rotation)
 		}
 		if result.VideoBitrate != 4800000 {
 			t.Errorf("VideoBitrate = %d, want 4800000", result.VideoBitrate)
@@ -140,6 +147,12 @@ func TestParseProbeOutput(t *testing.T) {
 		if result.AudioCodec != "mp3" {
 			t.Errorf("AudioCodec = %s, want mp3", result.AudioCodec)
 		}
+		if !result.HasAudio {
+			t.Error("HasAudio = false, want true")
+		}
+		if result.Rotation != 0 {
+			t.Errorf("Rotation = %d, want 0 for audio-only", result.Rotation)
+		}
 		if result.AudioSampleRate != 48000 {
 			t.Errorf("AudioSampleRate = %d, want 48000", result.AudioSampleRate)
 		}
@@ -163,6 +176,50 @@ func TestParseProbeOutput(t *testing.T) {
 		}
 		if result.Bitrate != 0 {
 			t.Errorf("Bitrate = %d, want 0 for empty bitrate", result.Bitrate)
+		}
+		if result.HasAudio {
+			t.Error("HasAudio = true, want false for empty streams")
+		}
+	})
+
+	t.Run("first video stream and audio presence", func(t *testing.T) {
+		data := []byte(`{
+				"format": {"format_name": "mp4", "duration": "2", "bit_rate": "1000"},
+				"streams": [
+					{
+						"codec_type": "video",
+						"codec_name": "h264",
+						"width": 1920,
+						"height": 1080,
+						"r_frame_rate": "30/1",
+						"side_data_list": [{"rotation": 90}]
+					},
+					{
+						"codec_type": "video",
+						"codec_name": "hevc",
+						"width": 640,
+						"height": 360,
+						"r_frame_rate": "24/1",
+						"side_data_list": [{"rotation": -90}]
+					},
+					{"codec_type": "audio"}
+				]
+			}`)
+		result, err := parseProbeOutput(data)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.VideoCodec != "h264" || result.Width != 1920 || result.Height != 1080 {
+			t.Errorf("first video stream was not selected: %+v", result)
+		}
+		if result.VideoFrameRate != 30 {
+			t.Errorf("VideoFrameRate = %f, want 30", result.VideoFrameRate)
+		}
+		if result.Rotation != 90 {
+			t.Errorf("Rotation = %d, want 90", result.Rotation)
+		}
+		if !result.HasAudio {
+			t.Error("HasAudio = false, want true when audio codec is missing")
 		}
 	})
 

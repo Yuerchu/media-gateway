@@ -26,15 +26,20 @@ type ffprobeFormat struct {
 }
 
 type ffprobeStream struct {
-	CodecType       string `json:"codec_type"`
-	CodecName       string `json:"codec_name"`
-	Width           int    `json:"width"`
-	Height          int    `json:"height"`
-	RFrameRate      string `json:"r_frame_rate"`
-	BitRate         string `json:"bit_rate"`
-	SampleRate      string `json:"sample_rate"`
-	Channels        int    `json:"channels"`
-	BitsPerRawSample string `json:"bits_per_raw_sample"`
+	CodecType        string            `json:"codec_type"`
+	CodecName        string            `json:"codec_name"`
+	Width            int               `json:"width"`
+	Height           int               `json:"height"`
+	RFrameRate       string            `json:"r_frame_rate"`
+	BitRate          string            `json:"bit_rate"`
+	SampleRate       string            `json:"sample_rate"`
+	Channels         int               `json:"channels"`
+	BitsPerRawSample string            `json:"bits_per_raw_sample"`
+	SideDataList     []ffprobeSideData `json:"side_data_list"`
+}
+
+type ffprobeSideData struct {
+	Rotation *int `json:"rotation"`
 }
 
 // parseFrameRate parses ffprobe r_frame_rate format "num/den" into float64.
@@ -49,6 +54,15 @@ func parseFrameRate(s string) float64 {
 		return 0
 	}
 	return num / den
+}
+
+func rotationFromSideData(sideData []ffprobeSideData) int {
+	for _, data := range sideData {
+		if data.Rotation != nil {
+			return *data.Rotation
+		}
+	}
+	return 0
 }
 
 // parseProbeOutput parses ffprobe JSON output into ProbeResult.
@@ -67,15 +81,22 @@ func parseProbeOutput(data []byte) (*model.ProbeResult, error) {
 		FormatName:  output.Format.FormatName,
 	}
 
+	videoSeen := false
 	for _, s := range output.Streams {
 		switch s.CodecType {
 		case "video":
+			if videoSeen {
+				continue
+			}
+			videoSeen = true
 			result.Width = s.Width
 			result.Height = s.Height
 			result.VideoCodec = s.CodecName
 			result.VideoFrameRate = parseFrameRate(s.RFrameRate)
 			result.VideoBitrate, _ = strconv.ParseInt(s.BitRate, 10, 64)
+			result.Rotation = rotationFromSideData(s.SideDataList)
 		case "audio":
+			result.HasAudio = true
 			result.AudioCodec = s.CodecName
 			result.AudioBitrate, _ = strconv.ParseInt(s.BitRate, 10, 64)
 			result.AudioSampleRate, _ = strconv.Atoi(s.SampleRate)
