@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/yuerchu/media-gateway/internal/callback"
@@ -234,6 +234,20 @@ func (w *Worker) processThumbnail(ctx context.Context, t *Task) (*TaskResult, er
 	}, nil
 }
 
+func buildStreamMetadata(probeResult *model.ProbeResult) map[string]any {
+	return map[string]any{
+		"width":       probeResult.Width,
+		"height":      probeResult.Height,
+		"duration":    probeResult.DurationSec,
+		"video_codec": probeResult.VideoCodec,
+		"audio_codec": probeResult.AudioCodec,
+		"has_audio":   probeResult.HasAudio,
+		"rotation":    probeResult.Rotation,
+		"format":      probeResult.FormatName,
+		"bitrate":     probeResult.Bitrate,
+	}
+}
+
 func (w *Worker) processMetadata(ctx context.Context, t *Task) (*TaskResult, error) {
 	// Create temp dir
 	tmpDir := filepath.Join(w.cfg.FFmpeg.TempDir, t.ID)
@@ -267,16 +281,7 @@ func (w *Worker) processMetadata(ctx context.Context, t *Task) (*TaskResult, err
 	if err != nil {
 		slog.Warn("ffprobe failed, may not be a media file", "error", err)
 	} else {
-		stream := map[string]any{
-			"width":       probeResult.Width,
-			"height":      probeResult.Height,
-			"duration":    probeResult.DurationSec,
-			"video_codec": probeResult.VideoCodec,
-			"audio_codec": probeResult.AudioCodec,
-			"format":      probeResult.FormatName,
-			"bitrate":     probeResult.Bitrate,
-		}
-		metadata["stream"] = stream
+		metadata["stream"] = buildStreamMetadata(probeResult)
 	}
 
 	// Content hash

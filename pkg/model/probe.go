@@ -9,6 +9,8 @@ type ProbeResult struct {
 	AudioCodec  string
 	FormatName  string
 	Bitrate     int64
+	HasAudio    bool
+	Rotation    int
 
 	VideoFrameRate   float64
 	VideoBitrate     int64
