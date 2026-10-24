@@ -419,6 +419,8 @@ components:
               height: 1080
               duration: 120.5
               video_codec: h264
+              has_audio: true
+              rotation: 0
               bitrate: 5000000
             sys:
               content_hash: abc123...
